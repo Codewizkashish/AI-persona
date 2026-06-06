@@ -1,12 +1,13 @@
 import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
-import { supabase } from "./supabase";
-import { ai } from "./gemini";
+import { getSupabaseClient } from "./supabase";
+import { getAiClient } from "./gemini";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 
 async function getEmbedding(text: string) {
+  const ai = getAiClient();
   const response = await ai.models.embedContent({
     model: "gemini-embedding-001",
     contents: text,
@@ -16,6 +17,7 @@ async function getEmbedding(text: string) {
 }
 
 export async function ingestDocuments() {
+  const supabase = getSupabaseClient();
   const files = fs.readdirSync(DATA_DIR);
 
   for (const file of files) {

@@ -1,4 +1,4 @@
-import { ai } from "@/app/lib/gemini";
+import { getAiClient } from "@/app/lib/gemini";
 import { retrieve } from "@/app/lib/retriever";
 
 type RetrievedDocument = {
@@ -8,6 +8,7 @@ type RetrievedDocument = {
 export async function POST(req: Request) {
   try {
     const { message } = await req.json();
+    const ai = getAiClient();
 
     const docs = await retrieve(message);
 

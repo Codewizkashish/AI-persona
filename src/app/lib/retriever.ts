@@ -1,7 +1,8 @@
-import { ai } from "./gemini";
-import { supabase } from "./supabase";
+import { getAiClient } from "./gemini";
+import { getSupabaseClient } from "./supabase";
 
 async function getEmbedding(text: string) {
+  const ai = getAiClient();
   const response = await ai.models.embedContent({
     model: "gemini-embedding-001",
     contents: text,
@@ -11,6 +12,7 @@ async function getEmbedding(text: string) {
 }
 
 export async function retrieve(query: string) {
+  const supabase = getSupabaseClient();
   const embedding = await getEmbedding(query);
 
   const { data, error } = await supabase.rpc(

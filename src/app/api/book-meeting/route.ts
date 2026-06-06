@@ -8,13 +8,6 @@ export async function POST(req: Request) {
             email,
         } = await req.json();
 
-        console.log("BOOK MEETING CALLED");
-        console.log({
-            start,
-            name,
-            email,
-        });
-
         const response = await fetch(
             "https://api.cal.com/v2/bookings",
             {
@@ -39,8 +32,7 @@ export async function POST(req: Request) {
 
         const data = await response.json();
 
-        console.log("CAL RESPONSE");
-        console.log(JSON.stringify(data, null, 2));
+        console.log("BOOKING CREATED:", data.status);
 
         return NextResponse.json({
             status: data.status,

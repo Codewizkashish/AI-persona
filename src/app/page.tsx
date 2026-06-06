@@ -2,9 +2,14 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  AlertCircle,
   ArrowDownToLine,
+  CalendarClock,
+  CalendarDays,
+  CheckCircle2,
   Copy,
   LoaderCircle,
+  Mail,
   Mic,
   MicOff,
   Menu,
@@ -33,6 +38,15 @@ type Message = {
   timestamp: Date;
 };
 
+type BookingSlot = {
+  start: string;
+  end?: string;
+};
+
+type AvailabilityStatus = "idle" | "loading" | "ready" | "empty" | "error";
+
+type BookingStatus = "idle" | "booking" | "success" | "error";
+
 const suggestedQuestions = [
   "Tell me about Kashish",
   "Show projects",
@@ -40,6 +54,7 @@ const suggestedQuestions = [
   "Experience",
   "Achievements",
   "Why should we hire you?",
+  "Book a call",
 ];
 
 const stats = [
@@ -64,10 +79,85 @@ const examplePrompts = [
   "Experience",
   "Achievements",
   "Education",
+  "Check availability",
 ];
+
+function getLocalDateInput(daysFromToday = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() + daysFromToday);
+
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - offset * 60_000);
+
+  return localDate.toISOString().slice(0, 10);
+}
 
 function formatTime(date: Date) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatSlotLabel(slot: BookingSlot) {
+  const start = new Date(slot.start);
+  const end = slot.end ? new Date(slot.end) : null;
+
+  const dayLabel = new Intl.DateTimeFormat([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(start);
+
+  const timeLabel = new Intl.DateTimeFormat([], {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(start);
+
+  if (!end) {
+    return `${dayLabel} · ${timeLabel}`;
+  }
+
+  const endTimeLabel = new Intl.DateTimeFormat([], {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(end);
+
+  return `${dayLabel} · ${timeLabel} - ${endTimeLabel}`;
+}
+
+function normalizeBookingSlots(payload: unknown): BookingSlot[] {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  const candidate = payload as {
+    slots?: BookingSlot[];
+    data?: Record<string, BookingSlot[]>;
+  };
+
+  if (Array.isArray(candidate.slots)) {
+    return candidate.slots.filter(
+      (slot): slot is BookingSlot =>
+        Boolean(slot?.start && typeof slot.start === "string"),
+    );
+  }
+
+  if (candidate.data && typeof candidate.data === "object") {
+    return Object.values(candidate.data).flatMap((daySlots) =>
+      Array.isArray(daySlots)
+        ? daySlots.filter(
+            (slot): slot is BookingSlot =>
+              Boolean(slot?.start && typeof slot.start === "string"),
+          )
+        : [],
+    );
+  }
+
+  return [];
+}
+
+function isBookingIntent(text: string) {
+  return /\b(book|booking|schedule|availability|available|call|meeting|meet)\b/i.test(
+    text,
+  );
 }
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -173,10 +263,12 @@ function PersonaAvatar({
 
 function Sidebar({
   onAsk,
+  onBook,
   isOpen,
   onClose,
 }: {
   onAsk: (question: string) => void;
+  onBook: () => void;
   isOpen: boolean;
   onClose: () => void;
 }) {
@@ -255,9 +347,16 @@ function Sidebar({
           Available for recruiter chats
         </div>
         <p className="mt-1 text-xs leading-5 text-zinc-400">
-          Ask about projects, technical depth, education, achievements, or fit
-          for AI/full-stack roles.
+          Ask about projects, technical depth, education, achievements, fit for
+          AI/full-stack roles, or open the booking panel to schedule a call.
         </p>
+        <button
+          type="button"
+          onClick={onBook}
+          className="mt-3 inline-flex rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-2 text-xs font-medium text-emerald-100 transition hover:border-emerald-300/35 hover:bg-emerald-300/15"
+        >
+          Book a call
+        </button>
       </div>
     </motion.aside>
   );
@@ -287,9 +386,18 @@ function Sidebar({
   );
 }
 
-function RecruiterActions() {
+function RecruiterActions({ onBook }: { onBook: () => void }) {
   return (
     <div className="flex items-center gap-2">
+      <motion.button
+        type="button"
+        onClick={onBook}
+        whileHover={{ y: -2 }}
+        whileTap={{ scale: 0.98 }}
+        className="hidden rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-400/15 hover:text-white sm:inline-flex"
+      >
+        Book a call
+      </motion.button>
       {recruiterLinks.map((link) => (
         <motion.a
           key={link.label}
@@ -502,11 +610,298 @@ function WelcomeHero({ onAsk }: { onAsk: (prompt: string) => void }) {
   );
 }
 
+function BookingPanel({
+  isOpen,
+  onClose,
+  date,
+  onDateChange,
+  name,
+  onNameChange,
+  email,
+  onEmailChange,
+  selectedSlot,
+  onSelectSlot,
+  slots,
+  availabilityStatus,
+  availabilityMessage,
+  bookingStatus,
+  bookingMessage,
+  isCheckingAvailability,
+  isBooking,
+  onCheckAvailability,
+  onBookCall,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  date: string;
+  onDateChange: (date: string) => void;
+  name: string;
+  onNameChange: (name: string) => void;
+  email: string;
+  onEmailChange: (email: string) => void;
+  selectedSlot: string;
+  onSelectSlot: (slot: string) => void;
+  slots: BookingSlot[];
+  availabilityStatus: AvailabilityStatus;
+  availabilityMessage: string | null;
+  bookingStatus: BookingStatus;
+  bookingMessage: string | null;
+  isCheckingAvailability: boolean;
+  isBooking: boolean;
+  onCheckAvailability: () => void;
+  onBookCall: () => void;
+}) {
+  if (!isOpen) {
+    return null;
+  }
+
+  const hasSlots = slots.length > 0;
+  const canBook = Boolean(selectedSlot && name.trim() && email.trim());
+
+  return (
+    <motion.section
+      layout
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 12 }}
+      className="mx-auto mb-6 max-w-4xl overflow-hidden rounded-[1.75rem] border border-white/10 bg-white/[0.045] shadow-2xl shadow-black/30 backdrop-blur-2xl"
+    >
+      <div className="border-b border-white/10 px-5 py-4 sm:px-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-cyan-200">
+              <CalendarClock className="size-3.5" aria-hidden="true" />
+              Book a call
+            </div>
+            <h3 className="mt-3 text-lg font-semibold text-white sm:text-xl">
+              Check live availability and confirm a slot
+            </h3>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
+              We fetch available times from Cal.com, then create the booking for
+              you directly from this page.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-9 shrink-0 place-items-center rounded-full border border-white/10 text-zinc-400 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+            aria-label="Close booking panel"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 px-5 py-5 sm:px-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">
+                Date
+              </span>
+              <input
+                type="date"
+                value={date}
+                onChange={(event) => onDateChange(event.target.value)}
+                className="w-full rounded-xl border border-white/10 bg-zinc-950/70 px-3 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-cyan-400/50"
+              />
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">
+                Name
+              </span>
+              <input
+                type="text"
+                value={name}
+                onChange={(event) => onNameChange(event.target.value)}
+                placeholder="Your name"
+                className="w-full rounded-xl border border-white/10 bg-zinc-950/70 px-3 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-cyan-400/50"
+              />
+            </label>
+            <label className="space-y-1.5">
+              <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">
+                <Mail className="size-3.5" aria-hidden="true" />
+                Email
+              </span>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => onEmailChange(event.target.value)}
+                placeholder="name@company.com"
+                className="w-full rounded-xl border border-white/10 bg-zinc-950/70 px-3 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-cyan-400/50"
+              />
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <motion.button
+              type="button"
+              onClick={onCheckAvailability}
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.98 }}
+              disabled={isCheckingAvailability}
+              className="inline-flex items-center gap-2 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-violet-950/35 transition disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isCheckingAvailability ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <CalendarDays className="size-4" aria-hidden="true" />
+              )}
+              Check availability
+            </motion.button>
+            <div className="text-xs leading-5 text-zinc-500">
+              Time slots are returned in live Cal.com availability.
+            </div>
+          </div>
+
+          {availabilityMessage ? (
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-300">
+              {availabilityMessage}
+            </div>
+          ) : null}
+
+          <div>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-sm font-medium text-zinc-200">
+                Available slots
+              </div>
+              <div className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                {availabilityStatus === "loading"
+                  ? "Fetching"
+                  : availabilityStatus === "ready"
+                    ? "Ready"
+                    : availabilityStatus === "empty"
+                      ? "No slots"
+                      : "Idle"}
+              </div>
+            </div>
+
+            {hasSlots ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {slots.map((slot) => {
+                  const isSelected = selectedSlot === slot.start;
+
+                  return (
+                    <motion.button
+                      type="button"
+                      key={slot.start}
+                      onClick={() => onSelectSlot(slot.start)}
+                      whileHover={{ y: -1 }}
+                      whileTap={{ scale: 0.985 }}
+                      className={cx(
+                        "rounded-2xl border px-3 py-3 text-left text-sm transition",
+                        isSelected
+                          ? "border-cyan-300/40 bg-cyan-400/12 text-cyan-50 shadow-lg shadow-cyan-950/20"
+                          : "border-white/10 bg-white/[0.035] text-zinc-200 hover:border-white/20 hover:bg-white/[0.06]",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span>{formatSlotLabel(slot)}</span>
+                        {isSelected ? (
+                          <CheckCircle2 className="size-4 shrink-0 text-cyan-300" aria-hidden="true" />
+                        ) : null}
+                      </div>
+                    </motion.button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+                {availabilityStatus === "loading"
+                  ? "Loading live slots..."
+                  : "Choose a date and check availability to see open times."}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-4 rounded-[1.5rem] border border-white/10 bg-zinc-950/60 p-4">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+            <div className="flex items-start gap-3">
+              <div className="grid size-10 place-items-center rounded-xl bg-cyan-400/10 text-cyan-200">
+                <CalendarClock className="size-5" aria-hidden="true" />
+              </div>
+              <div>
+                <div className="text-sm font-medium text-white">
+                  Selected slot
+                </div>
+                <div className="mt-1 text-sm leading-6 text-zinc-400">
+                  {selectedSlot
+                    ? formatSlotLabel({ start: selectedSlot })
+                    : "Pick a time after checking availability."}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-medium text-white">
+                Booking status
+              </div>
+              <div className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                {bookingStatus === "booking"
+                  ? "Creating"
+                  : bookingStatus === "success"
+                    ? "Confirmed"
+                    : bookingStatus === "error"
+                      ? "Needs attention"
+                      : "Idle"}
+              </div>
+            </div>
+            <div className="mt-2 min-h-12 text-sm leading-6 text-zinc-400">
+              {bookingMessage ?? "Your booking confirmation will appear here."}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm text-zinc-400">
+            <div className="mb-2 flex items-center gap-2 text-zinc-200">
+              <AlertCircle className="size-4 text-amber-300" aria-hidden="true" />
+              Honest booking note
+            </div>
+            I only confirm a call once Cal.com returns a live slot.
+          </div>
+
+          <motion.button
+            type="button"
+            onClick={onBookCall}
+            whileHover={{ y: -1 }}
+            whileTap={{ scale: 0.98 }}
+            disabled={!canBook || isBooking}
+            className="mt-auto inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 px-4 py-3 text-sm font-medium text-white shadow-lg shadow-violet-950/35 transition disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isBooking ? (
+              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <CheckCircle2 className="size-4" aria-hidden="true" />
+            )}
+            Confirm booking
+          </motion.button>
+        </div>
+      </div>
+    </motion.section>
+  );
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [hasStartedChat, setHasStartedChat] = useState(false);
+  const [bookingOpen, setBookingOpen] = useState(false);
+  const [bookingDate, setBookingDate] = useState(() => getLocalDateInput(1));
+  const [bookingName, setBookingName] = useState("");
+  const [bookingEmail, setBookingEmail] = useState("");
+  const [selectedSlot, setSelectedSlot] = useState("");
+  const [availableSlots, setAvailableSlots] = useState<BookingSlot[]>([]);
+  const [availabilityStatus, setAvailabilityStatus] =
+    useState<AvailabilityStatus>("idle");
+  const [availabilityMessage, setAvailabilityMessage] = useState<string | null>(
+    null,
+  );
+  const [bookingStatus, setBookingStatus] = useState<BookingStatus>("idle");
+  const [bookingMessage, setBookingMessage] = useState<string | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [showScrollButton, setShowScrollButton] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -558,9 +953,130 @@ export default function Home() {
     return () => container.removeEventListener("scroll", onScroll);
   }, []);
 
+  const openBookingPanel = () => {
+    setBookingOpen(true);
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+    });
+  };
+
+  const loadAvailability = async (date = bookingDate) => {
+    if (!date) return;
+
+    setAvailabilityStatus("loading");
+    setAvailabilityMessage("Checking live calendar availability...");
+    setSelectedSlot("");
+    setAvailableSlots([]);
+    setBookingStatus("idle");
+    setBookingMessage(null);
+
+    try {
+      const response = await fetch("/api/check-availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date,
+          timeZone: "Asia/Kolkata",
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          data?.error || "Unable to load availability right now.",
+        );
+      }
+
+      const slots = normalizeBookingSlots(data);
+      setAvailableSlots(slots);
+      setAvailabilityStatus(slots.length ? "ready" : "empty");
+      setAvailabilityMessage(
+        slots.length
+          ? `Found ${slots.length} live slot${slots.length === 1 ? "" : "s"} for ${date}.`
+          : `No live slots were returned for ${date}. Try another date.`,
+      );
+    } catch (error) {
+      setAvailableSlots([]);
+      setAvailabilityStatus("error");
+      setAvailabilityMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to load availability right now.",
+      );
+    }
+  };
+
+  const bookCall = async () => {
+    if (!selectedSlot || !bookingName.trim() || !bookingEmail.trim()) {
+      setBookingStatus("error");
+      setBookingMessage("Please choose a slot and fill in your name and email.");
+      return;
+    }
+
+    setBookingStatus("booking");
+    setBookingMessage("Creating your booking...");
+
+    try {
+      const response = await fetch("/api/book-meeting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          start: selectedSlot,
+          name: bookingName.trim(),
+          email: bookingEmail.trim(),
+          timeZone: "Asia/Kolkata",
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || "Booking failed.");
+      }
+
+      const startLabel = data?.start
+        ? formatSlotLabel({ start: data.start, end: data.end ?? undefined })
+        : formatSlotLabel({ start: selectedSlot });
+
+      setBookingStatus("success");
+      setBookingMessage(
+        `Booking confirmed for ${startLabel}. A confirmation email was sent to ${bookingEmail.trim()}. ${
+          data?.bookingUid ? `Reference: ${data.bookingUid}.` : ""
+        }`,
+      );
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `I've booked the call for ${startLabel}. ${
+            data?.bookingUid ? `Booking reference: ${data.bookingUid}. ` : ""
+          }A confirmation email was sent to ${bookingEmail.trim()}.`,
+          timestamp: new Date(),
+        },
+      ]);
+    } catch (error) {
+      setBookingStatus("error");
+      setBookingMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to create the booking right now.",
+      );
+    }
+  };
+
   const sendMessage = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || isLoading) return;
+
+    if (isBookingIntent(trimmed)) {
+      openBookingPanel();
+      setInput("");
+      inputRef.current?.focus();
+      return;
+    }
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -569,6 +1085,7 @@ export default function Home() {
       timestamp: new Date(),
     };
 
+    setHasStartedChat(true);
     setMessages((current) => [...current, userMessage]);
     setInput("");
     setIsLoading(true);
@@ -705,6 +1222,7 @@ export default function Home() {
       <div className="persona-background" aria-hidden="true" />
       <Sidebar
         onAsk={sendMessage}
+        onBook={openBookingPanel}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
@@ -712,7 +1230,7 @@ export default function Home() {
       <section className="relative z-10 flex min-w-0 flex-1 flex-col">
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-zinc-950/55 px-4 backdrop-blur-2xl sm:px-6">
           <div className="flex items-center gap-3">
-              <button
+            <button
               type="button"
               onClick={() => setSidebarOpen(true)}
               className="grid size-10 place-items-center rounded-full border border-white/10 bg-white/[0.045] text-zinc-200 transition hover:bg-white/10 lg:hidden"
@@ -727,15 +1245,49 @@ export default function Home() {
               </div>
             </div>
           </div>
-          <RecruiterActions />
+          <RecruiterActions onBook={openBookingPanel} />
         </header>
 
         <div
           ref={scrollRef}
           className="relative flex-1 overflow-y-auto px-4 pb-36 pt-6 sm:px-6 lg:px-10"
         >
+          <AnimatePresence>
+            {bookingOpen ? (
+              <BookingPanel
+                isOpen={bookingOpen}
+                onClose={() => setBookingOpen(false)}
+                date={bookingDate}
+                onDateChange={(nextDate) => {
+                  setBookingDate(nextDate);
+                  setSelectedSlot("");
+                  setAvailableSlots([]);
+                  setAvailabilityStatus("idle");
+                  setAvailabilityMessage(null);
+                  setBookingStatus("idle");
+                  setBookingMessage(null);
+                }}
+                name={bookingName}
+                onNameChange={setBookingName}
+                email={bookingEmail}
+                onEmailChange={setBookingEmail}
+                selectedSlot={selectedSlot}
+                onSelectSlot={setSelectedSlot}
+                slots={availableSlots}
+                availabilityStatus={availabilityStatus}
+                availabilityMessage={availabilityMessage}
+                bookingStatus={bookingStatus}
+                bookingMessage={bookingMessage}
+                isCheckingAvailability={availabilityStatus === "loading"}
+                isBooking={bookingStatus === "booking"}
+                onCheckAvailability={() => void loadAvailability()}
+                onBookCall={() => void bookCall()}
+              />
+            ) : null}
+          </AnimatePresence>
+
           <AnimatePresence mode="popLayout">
-            {messages.length === 0 ? (
+            {!hasStartedChat ? (
               <WelcomeHero key="welcome" onAsk={sendMessage} />
             ) : (
               <motion.div

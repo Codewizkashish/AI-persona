@@ -40,16 +40,7 @@ The design goal is simple: if a recruiter asks a question, the persona should an
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  U[Recruiter] --> C[Chat UI / Voice Agent]
-  C --> A[Next.js API routes]
-  A --> R[Retriever]
-  R --> S[(Supabase documents table)]
-  A --> G[Gemini]
-  A --> K[Cal.com]
-  K --> B[Availability + Booking Confirmation]
-```
+![AI Persona Architecture](AI-Persona-architecture.png)
 
 ### Data Grounding
 

@@ -35,8 +35,9 @@ if (typeof body.query === "string") {
     const docs = await retrieve(query);
 
     const context = docs
-      .map((doc: any) => doc.content)
-      .join("\n\n");
+  .slice(0, 1)
+  .map((doc: any) => doc.content)
+  .join("\n\n");
 
     const toolCallId =
   body.message?.toolCalls?.[0]?.id;

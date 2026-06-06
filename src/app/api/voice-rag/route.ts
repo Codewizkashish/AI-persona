@@ -4,6 +4,11 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
+    console.log(
+  "VOICE-RAG BODY:",
+  JSON.stringify(body, null, 2)
+);
+
     const query =
       body.query ||
       body.message ||

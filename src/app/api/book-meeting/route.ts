@@ -39,8 +39,8 @@ export async function POST(req: Request) {
 
         const data = await response.json();
 
-        console.log("BOOKING SUCCESS");
-        console.log(data.status);
+        console.log("CAL RESPONSE");
+        console.log(JSON.stringify(data, null, 2));
 
         return NextResponse.json({
             status: data.status,

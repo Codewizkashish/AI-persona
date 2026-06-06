@@ -32,7 +32,9 @@ export async function POST(req: Request) {
 
         const data = await response.json();
 
-        return NextResponse.json(data);
+return NextResponse.json({
+    status: data.status,
+});
     } catch (error) {
         return NextResponse.json(
             { error: "Booking failed" },
